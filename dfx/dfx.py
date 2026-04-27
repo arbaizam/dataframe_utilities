@@ -639,23 +639,19 @@ class DFx:
         align nested struct fields, and it relies on Spark's normal cast
         behavior for incompatible values.
         """
-        df = self.df
         target_schema = spark.table(table_name).schema
-        target_cols = [field.name for field in target_schema]
+        source_columns = set(self.df.columns)
 
-        for field in target_schema:
-            if field.name not in df.columns:
-                df = df.withColumn(field.name, F.lit(None).cast(field.dataType))
-
-        for field in target_schema:
-            if field.name in df.columns:
-                df = df.withColumn(
-                    field.name,
-                    F.col(self._quote_name(field.name)).cast(field.dataType),
-                )
-
+        aligned_columns = [
+            (
+                F.col(self._quote_name(field.name)).cast(field.dataType)
+                if field.name in source_columns
+                else F.lit(None).cast(field.dataType)
+            ).alias(field.name)
+            for field in target_schema
+        ]
         return DFx(
-            df.select(*[F.col(self._quote_name(col)).alias(col) for col in target_cols])
+            self.df.select(*aligned_columns)
         )
 
     @staticmethod
@@ -718,9 +714,10 @@ class DFx:
 
         source_col = F.col(col) if isinstance(col, str) else col
         parsed_expr = None
+        use_try_to_timestamp = hasattr(F, "try_to_timestamp")
 
         for fmt in formats:
-            if hasattr(F, "try_to_timestamp"):
+            if use_try_to_timestamp:
                 attempt = F.try_to_timestamp(source_col, F.lit(fmt)).cast("date")
             else:
                 attempt = F.to_date(source_col, fmt)
